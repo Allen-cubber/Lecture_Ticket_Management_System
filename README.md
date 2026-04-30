@@ -71,6 +71,7 @@ http://127.0.0.1:8000/student
 - Runtime：Python
 - Build Command：`python -m py_compile server.py`
 - Start Command：`python server.py`
+- Python Version：`3.11.13`
 - Environment Variable：设置 `ADMIN_PASSWORD` 为后台强密码
 
 Render 会自动提供 `PORT` 环境变量，程序也会在 Render 环境下默认监听 `0.0.0.0`。

@@ -6,5 +6,7 @@ services:
     buildCommand: python -m py_compile server.py
     startCommand: python server.py
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.13
       - key: ADMIN_PASSWORD
         sync: false
