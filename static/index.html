@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>讲座票管理系统</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar admin-topbar">
+    <div class="topbar-title">
+      <h1>讲座票管理系统</h1>
+      <p>学生名单、讲座活动、票数汇总</p>
+    </div>
+    <nav class="topbar-actions admin-menu" aria-label="后台菜单">
+      <a class="menu-link" href="#ticket-statistics">讲座票统计</a>
+      <a class="menu-link" href="#feedback-section">学生反馈</a>
+      <details class="template-menu">
+        <summary>模板下载</summary>
+        <div class="template-menu-list">
+          <a href="/api/templates/students">学生名单模板</a>
+          <a href="/api/templates/events">讲座活动模板</a>
+        </div>
+      </details>
+      <a class="menu-link primary-link" href="/api/export">汇总导出</a>
+      <button id="logout-button" class="menu-link logout-link" type="button">退出登录</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="ticket-statistics" class="metrics" aria-label="讲座票统计">
+      <div class="metric">
+        <span>学生总数</span>
+        <strong id="metric-students">0</strong>
+      </div>
+      <div class="metric">
+        <span>讲座票总数</span>
+        <strong id="metric-tickets">0</strong>
+      </div>
+      <div class="metric">
+        <span>已达标</span>
+        <strong id="metric-completed">0</strong>
+      </div>
+      <div class="metric">
+        <span>未达标</span>
+        <strong id="metric-unfinished">0</strong>
+      </div>
+    </section>
+
+    <section class="workbench" aria-label="导入">
+      <form id="student-import-form" class="panel">
+        <div>
+          <h2>学生名单导入</h2>
+          <p>识别姓名、学号、学历层次，重复学号会更新信息并保留已有票数。</p>
+        </div>
+        <label class="file-picker">
+          <span id="student-file-name">选择 Excel</span>
+          <input id="student-file" name="file" type="file" accept=".xlsx">
+        </label>
+        <button class="button primary" type="submit">导入学生名单</button>
+      </form>
+
+      <form id="event-import-form" class="panel">
+        <div>
+          <h2>讲座活动导入</h2>
+          <p>姓名和学号同时匹配才计入，重复活动记录不会重复加票。</p>
+        </div>
+        <label class="file-picker">
+          <span id="event-file-name">选择 Excel</span>
+          <input id="event-file" name="file" type="file" accept=".xlsx">
+        </label>
+        <button class="button primary" type="submit">导入讲座记录</button>
+      </form>
+    </section>
+
+    <section id="result-panel" class="result-panel hidden" aria-live="polite"></section>
+
+    <section class="rules-band" aria-label="讲座票要求">
+      <h2>讲座票要求</h2>
+      <div id="rules-list" class="rules-list"></div>
+    </section>
+
+    <section id="feedback-section" class="feedback-section" aria-label="学生反馈">
+      <div class="table-toolbar">
+        <div>
+          <h2>学生反馈</h2>
+          <p>按后台已录入讲座活动归类</p>
+        </div>
+        <button id="refresh-feedback" class="button primary" type="button">刷新反馈</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>提交时间</th>
+              <th>学号</th>
+              <th>姓名</th>
+              <th>讲座活动</th>
+              <th>活动时间</th>
+              <th>状态</th>
+              <th>反馈意见</th>
+              <th>联系方式</th>
+              <th>管理员备注</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="feedback-body">
+            <tr><td colspan="10" class="empty">暂无反馈</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="students-section" aria-label="学生列表">
+      <div class="table-toolbar">
+        <div>
+          <h2>学生票数</h2>
+          <p>当前最多显示 1000 条记录</p>
+        </div>
+        <div class="toolbar-controls">
+          <input id="search-input" type="search" placeholder="搜索学号、姓名、层次">
+          <div class="segmented" role="group" aria-label="筛选状态">
+            <button class="active" type="button" data-status="all">全部</button>
+            <button type="button" data-status="unfinished">未达标</button>
+            <button type="button" data-status="completed">已达标</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>学号</th>
+              <th>姓名</th>
+              <th>学历层次</th>
+              <th>讲座票</th>
+              <th>要求</th>
+              <th>进度</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="students-body">
+            <tr><td colspan="7" class="empty">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

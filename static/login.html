@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台登录</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="login-page">
+  <main class="login-main">
+    <section class="login-panel">
+      <div>
+        <h1>后台登录</h1>
+        <p>讲座票管理系统</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <label for="admin-password">后台密码</label>
+        <input id="admin-password" name="password" type="password" autocomplete="current-password" autofocus>
+        <button class="button primary" type="submit">登录</button>
+      </form>
+      <p id="login-error" class="student-error hidden"></p>
+      <a class="student-link" href="/student">进入学生查询端</a>
+    </section>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

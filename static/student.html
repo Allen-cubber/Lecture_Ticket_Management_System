@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>讲座票查询</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="student-page">
+  <header class="topbar student-topbar">
+    <div>
+      <h1>讲座票查询</h1>
+      <p>学生端</p>
+    </div>
+    <span class="readonly-badge">只读</span>
+  </header>
+
+  <main class="student-main">
+    <section class="query-panel" aria-label="学号查询">
+      <form id="student-query-form" class="student-query-form">
+        <label for="student-id">学号</label>
+        <div class="student-query-row">
+          <input id="student-id" name="student_id" type="text" autocomplete="off" placeholder="请输入学号">
+          <button class="button primary" type="submit">查询</button>
+        </div>
+      </form>
+      <p id="student-error" class="student-error hidden"></p>
+    </section>
+
+    <section id="student-result" class="student-result hidden" aria-live="polite">
+      <div class="student-result-head">
+        <div>
+          <span class="result-kicker">查询结果</span>
+          <h2 id="result-student-id">-</h2>
+        </div>
+        <span id="result-status" class="status">-</span>
+      </div>
+
+      <div class="student-stat-grid">
+        <div class="student-stat">
+          <span>学历层次</span>
+          <strong id="result-level">-</strong>
+        </div>
+        <div class="student-stat">
+          <span>现有讲座票</span>
+          <strong id="result-current">0</strong>
+        </div>
+        <div class="student-stat">
+          <span>要求</span>
+          <strong id="result-requirement">0</strong>
+        </div>
+        <div class="student-stat">
+          <span>还需</span>
+          <strong id="result-remaining">0</strong>
+        </div>
+      </div>
+
+      <div class="student-progress">
+        <div class="student-progress-label">
+          <span id="result-progress-text">0/0</span>
+          <span id="result-updated">-</span>
+        </div>
+        <div class="student-progress-track">
+          <div id="result-progress-bar" class="student-progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="feedback-action">
+        <button id="open-feedback" class="button primary" type="button">提交反馈</button>
+      </div>
+
+      <div class="event-list-block">
+        <h2>已记录讲座</h2>
+        <div id="event-list" class="event-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="feedback-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+    <div class="modal-backdrop" data-close-feedback></div>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h2 id="feedback-title">提交反馈</h2>
+        <button class="modal-close" type="button" data-close-feedback aria-label="关闭">×</button>
+      </div>
+      <form id="feedback-form" class="feedback-form">
+        <label for="feedback-activity">讲座活动</label>
+        <select id="feedback-activity" name="activity_id" required>
+          <option value="">请选择讲座活动</option>
+        </select>
+        <label for="feedback-message">反馈意见</label>
+        <textarea id="feedback-message" name="message" maxlength="500" required placeholder="例如：我参加了这次活动，但讲座票没有加上。"></textarea>
+        <label for="feedback-contact">联系方式</label>
+        <input id="feedback-contact" name="contact" type="text" maxlength="80" placeholder="选填">
+        <button class="button primary" type="submit">提交反馈</button>
+      </form>
+      <p id="feedback-tip" class="feedback-tip"></p>
+    </div>
+  </div>
+
+  <script src="/static/student.js"></script>
+</body>
+</html>
