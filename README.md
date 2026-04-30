@@ -62,6 +62,21 @@ http://127.0.0.1:8000/student
 
 如果使用 Nginx、Apache、宝塔、学校服务器网关等反向代理，可以把两个域名都转发到同一个 Python 服务，再分别指向 `/` 和 `/student`。即使使用同一个服务，后台端也已经有密码登录保护。
 
+## Render 免费部署
+
+项目已包含 `render.yaml`，可以在 Render 里用 Blueprint 或 Web Service 直接部署。
+
+基本配置：
+
+- Runtime：Python
+- Build Command：`python -m py_compile server.py`
+- Start Command：`python server.py`
+- Environment Variable：设置 `ADMIN_PASSWORD` 为后台强密码
+
+Render 会自动提供 `PORT` 环境变量，程序也会在 Render 环境下默认监听 `0.0.0.0`。
+
+注意：Render 免费 Web Service 的本地文件系统不是持久化存储。本项目免费部署时适合试运行和演示，上传的 SQLite 数据库、反馈和自动备份可能在服务重启、休眠或重新部署后丢失。正式使用建议改用 PostgreSQL，或使用带持久磁盘的部署方案。
+
 ## 讲座票要求
 
 | 学历层次 | 要求 |

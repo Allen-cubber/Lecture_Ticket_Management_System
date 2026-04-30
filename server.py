@@ -28,7 +28,7 @@ import cgi
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("LTMS_DATA_DIR", str(ROOT / "data"))).resolve()
 DB_PATH = DATA_DIR / "tickets.db"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123456")
 ADMIN_SESSIONS: set[str] = set()
@@ -1428,8 +1428,10 @@ class TicketHandler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lecture ticket management system")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=8000, type=int)
+    default_host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") or os.environ.get("RENDER") else "127.0.0.1")
+    default_port = int(os.environ.get("PORT", "8000"))
+    parser.add_argument("--host", default=default_host)
+    parser.add_argument("--port", default=default_port, type=int)
     args = parser.parse_args()
 
     init_db()
