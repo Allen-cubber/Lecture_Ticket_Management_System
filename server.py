@@ -279,6 +279,8 @@ def init_db() -> None:
         ensure_column(db, "feedback", "admin_note", "TEXT")
         ensure_column(db, "feedback", "handled_at", "TEXT")
         ensure_column(db, "feedback", "ticket_granted", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "feedback", "admin_deleted", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "feedback", "deleted_at", "TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_feedback_activity ON feedback(activity_name, activity_time)")
         try:
@@ -772,6 +774,26 @@ def query_student_ticket(query: dict[str, list[str]]) -> dict[str, Any]:
                 (student_id,),
             ).fetchall()
         ]
+        feedback_rows = [
+            dict(row)
+            for row in db.execute(
+                """
+                SELECT activity_name,
+                       activity_time,
+                       message,
+                       created_at,
+                       COALESCE(status, 'pending') AS status,
+                       COALESCE(admin_note, '') AS admin_note,
+                       COALESCE(handled_at, '') AS handled_at,
+                       COALESCE(ticket_granted, 0) AS ticket_granted
+                  FROM feedback
+                 WHERE student_id = ?
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT 100
+                """,
+                (student_id,),
+            ).fetchall()
+        ]
     finally:
         db.close()
 
@@ -792,6 +814,14 @@ def query_student_ticket(query: dict[str, list[str]]) -> dict[str, Any]:
             "updated_at": student["updated_at"],
         },
         "events": events,
+        "feedback": [
+            {
+                **row,
+                "status_label": FEEDBACK_STATUSES.get(row["status"], row["status"]),
+                "ticket_granted": bool(row["ticket_granted"]),
+            }
+            for row in feedback_rows
+        ],
     }
 
 
@@ -921,11 +951,12 @@ def list_feedback() -> dict[str, Any]:
                               AND e.activity_name = f.activity_name
                               AND e.activity_time = f.activity_time
                        ) THEN 1 ELSE 0 END AS ticket_exists
-                  FROM feedback f
-             LEFT JOIN students s ON s.student_id = f.student_id
-                 ORDER BY f.created_at DESC, f.id DESC
-                 LIMIT 500
-                """
+                    FROM feedback f
+               LEFT JOIN students s ON s.student_id = f.student_id
+                   WHERE COALESCE(f.admin_deleted, 0) = 0
+                   ORDER BY f.created_at DESC, f.id DESC
+                   LIMIT 500
+                  """
             ).fetchall()
         ]
     for row in rows:
@@ -935,7 +966,7 @@ def list_feedback() -> dict[str, Any]:
     return {"feedback": rows, "count": len(rows), "statuses": FEEDBACK_STATUSES}
 
 
-def update_feedback(payload: dict[str, Any]) -> dict[str, Any]:
+def update_feedback_legacy(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         feedback_id = int(payload.get("id"))
     except (TypeError, ValueError) as exc:
@@ -1038,6 +1069,186 @@ def update_feedback(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def update_feedback(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        feedback_id = int(payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise AppError("缺少反馈编号") from exc
+
+    admin_note = clean_text(payload.get("admin_note"))
+    if len(admin_note) > 500:
+        raise AppError("管理员备注不能超过 500 字")
+
+    action = clean_text(payload.get("action"))
+    if not action:
+        if payload.get("grant_ticket"):
+            action = "grant"
+        elif clean_text(payload.get("status")) == "rejected":
+            action = "reject"
+        else:
+            action = "note"
+    if action not in {"note", "grant", "reject", "delete"}:
+        raise AppError("反馈处理操作不正确")
+
+    timestamp = now_text()
+    backup_name = backup_database("feedback_update")
+
+    with connect_db() as db:
+        feedback = db.execute(
+            """
+            SELECT id,
+                   student_id,
+                   activity_name,
+                   activity_time,
+                   COALESCE(status, 'pending') AS status,
+                   COALESCE(handled_at, '') AS handled_at,
+                   COALESCE(ticket_granted, 0) AS ticket_granted,
+                   COALESCE(admin_deleted, 0) AS admin_deleted
+              FROM feedback
+             WHERE id = ?
+            """,
+            (feedback_id,),
+        ).fetchone()
+        if feedback is None:
+            raise AppError("没有找到该反馈", 404)
+
+        status = feedback["status"]
+        handled_at = feedback["handled_at"] or None
+        ticket_granted = int(feedback["ticket_granted"] or 0)
+        ticket_added = False
+        ticket_removed = False
+
+        if action == "delete":
+            if status == "pending":
+                raise AppError("只能删除已处理反馈记录")
+            db.execute(
+                """
+                UPDATE feedback
+                   SET admin_deleted = 1,
+                       deleted_at = ?,
+                       admin_note = ?
+                 WHERE id = ?
+                """,
+                (timestamp, admin_note, feedback_id),
+            )
+            db.commit()
+            return {
+                "ok": True,
+                "message": "反馈记录已删除",
+                "ticket_added": False,
+                "ticket_removed": False,
+                "status": status,
+                "deleted": True,
+                "backup": backup_name,
+            }
+
+        if action == "grant":
+            student = db.execute(
+                "SELECT student_id, name FROM students WHERE student_id = ?",
+                (feedback["student_id"],),
+            ).fetchone()
+            if student is None:
+                raise AppError("没有找到反馈对应的学生", 404)
+
+            exists = db.execute(
+                """
+                SELECT id
+                  FROM ticket_events
+                 WHERE student_id = ?
+                   AND activity_name = ?
+                   AND activity_time = ?
+                 LIMIT 1
+                """,
+                (feedback["student_id"], feedback["activity_name"], feedback["activity_time"]),
+            ).fetchone()
+
+            if exists is None:
+                try:
+                    db.execute(
+                        """
+                        INSERT INTO ticket_events
+                            (student_id, student_name, activity_name, activity_time, imported_at, source_row)
+                        VALUES (?, ?, ?, ?, ?, NULL)
+                        """,
+                        (
+                            feedback["student_id"],
+                            student["name"],
+                            feedback["activity_name"],
+                            feedback["activity_time"],
+                            timestamp,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise AppError("该学生的这次讲座票已经计入，不能重复补票") from exc
+
+                db.execute(
+                    """
+                    UPDATE students
+                       SET current_tickets = current_tickets + 1,
+                           updated_at = ?
+                     WHERE student_id = ?
+                    """,
+                    (timestamp, feedback["student_id"]),
+                )
+                ticket_added = True
+                ticket_granted = 1
+
+            status = "resolved"
+            handled_at = timestamp
+
+        elif action == "reject":
+            if ticket_granted:
+                cur = db.execute(
+                    """
+                    DELETE FROM ticket_events
+                     WHERE student_id = ?
+                       AND activity_name = ?
+                       AND activity_time = ?
+                       AND source_row IS NULL
+                    """,
+                    (feedback["student_id"], feedback["activity_name"], feedback["activity_time"]),
+                )
+                if cur.rowcount:
+                    db.execute(
+                        """
+                        UPDATE students
+                           SET current_tickets = CASE
+                                   WHEN current_tickets > 0 THEN current_tickets - 1
+                                   ELSE 0
+                               END,
+                               updated_at = ?
+                         WHERE student_id = ?
+                        """,
+                        (timestamp, feedback["student_id"]),
+                    )
+                    ticket_removed = True
+                ticket_granted = 0
+            status = "rejected"
+            handled_at = timestamp
+
+        db.execute(
+            """
+            UPDATE feedback
+               SET status = ?,
+                   admin_note = ?,
+                   handled_at = ?,
+                   ticket_granted = ?
+             WHERE id = ?
+            """,
+            (status, admin_note, handled_at, int(ticket_granted), feedback_id),
+        )
+        db.commit()
+
+    return {
+        "ok": True,
+        "message": "反馈已处理",
+        "ticket_added": ticket_added,
+        "ticket_removed": ticket_removed,
+        "status": status,
+        "backup": backup_name,
+    }
+
+
 def update_student(payload: dict[str, Any]) -> dict[str, Any]:
     student_id = normalize_student_id(payload.get("student_id"))
     if not student_id:
@@ -1046,14 +1257,7 @@ def update_student(payload: dict[str, Any]) -> dict[str, Any]:
     params: list[Any] = []
 
     if "current_tickets" in payload:
-        try:
-            current_tickets = int(payload["current_tickets"])
-        except (TypeError, ValueError) as exc:
-            raise AppError("讲座票数量必须是整数") from exc
-        if current_tickets < 0:
-            raise AppError("讲座票数量不能小于 0")
-        fields.append("current_tickets = ?")
-        params.append(current_tickets)
+        raise AppError("后台不支持手动修改讲座票数量，请通过讲座导入或确认补票调整")
 
     if "education_level" in payload:
         level = infer_education_level(payload.get("education_level"))

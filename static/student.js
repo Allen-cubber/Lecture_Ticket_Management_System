@@ -66,6 +66,41 @@ function renderEvents(events) {
     .join("");
 }
 
+function feedbackResultText(item) {
+  if (item.status === "rejected") return "已驳回";
+  if (item.status === "resolved") return item.ticket_granted ? "已补票" : "已处理";
+  return "待处理";
+}
+
+function renderFeedbackResults(items) {
+  const list = document.querySelector("#feedback-result-list");
+  if (!items.length) {
+    list.innerHTML = '<p class="student-empty">暂无反馈记录</p>';
+    return;
+  }
+
+  list.innerHTML = items
+    .map((item) => {
+      const statusText = feedbackResultText(item);
+      const statusClass = item.status === "pending" ? "warn" : item.status === "rejected" ? "warn" : "ok";
+      const handledText = item.handled_at ? `处理时间：${escapeHtml(item.handled_at)}` : "后台尚未处理";
+      const note = item.admin_note ? `<p class="feedback-result-note">管理员备注：${escapeHtml(item.admin_note)}</p>` : "";
+      return `
+        <div class="feedback-result-item">
+          <div>
+            <strong>${escapeHtml(item.activity_name)}</strong>
+            <span>${escapeHtml(item.activity_time)}</span>
+            <span>提交时间：${escapeHtml(item.created_at)}</span>
+            <span>${handledText}</span>
+            ${note}
+          </div>
+          <span class="status ${statusClass}">${statusText}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
 function renderActivityOptions() {
   if (!activityOptions.length) {
     feedbackActivity.innerHTML = '<option value="">暂无可反馈讲座</option>';
@@ -125,6 +160,7 @@ function renderResult(data) {
   status.className = `status ${student.complete ? "ok" : "warn"}`;
   document.querySelector("#result-progress-bar").style.width = `${student.progress_percent}%`;
   renderEvents(data.events || []);
+  renderFeedbackResults(data.feedback || []);
 
   hideError();
   resultPanel.classList.remove("hidden");
@@ -189,6 +225,7 @@ async function submitFeedback() {
     feedbackTip.textContent = data.message || "反馈已提交";
     document.querySelector("#feedback-message").value = "";
     document.querySelector("#feedback-contact").value = "";
+    await runQuery(currentStudentId);
     window.setTimeout(closeFeedbackModal, 700);
   } catch (error) {
     feedbackTip.textContent = error.message;

@@ -10,7 +10,7 @@
   <header class="topbar admin-topbar">
     <div class="topbar-title">
       <h1>讲座票管理系统</h1>
-      <p>学生名单、讲座活动、票数汇总</p>
+      <p>学生名单、讲座活动、票数统计与反馈处理</p>
     </div>
     <nav class="topbar-actions admin-menu" aria-label="后台菜单">
       <a class="menu-link" href="#ticket-statistics">讲座票统计</a>
@@ -84,30 +84,24 @@
       <div class="table-toolbar">
         <div>
           <h2>学生反馈</h2>
-          <p>按后台已录入讲座活动归类</p>
+          <p>按后台已录入讲座活动归类，可在这里处理补票申请。</p>
         </div>
-        <button id="refresh-feedback" class="button primary" type="button">刷新反馈</button>
+        <div class="toolbar-controls feedback-toolbar-controls">
+          <div id="feedback-tabs" class="segmented" role="group" aria-label="反馈状态切换">
+            <button class="active" type="button" data-feedback-status="pending">未处理</button>
+            <button type="button" data-feedback-status="resolved">已处理</button>
+          </div>
+          <div class="feedback-batch-actions" aria-label="批量处理反馈">
+            <span id="feedback-selected-count">已选 0 项</span>
+            <button id="feedback-batch-grant" type="button" disabled>批量补票</button>
+            <button id="feedback-batch-reject" type="button" disabled>批量驳回</button>
+            <button id="feedback-batch-delete" type="button" disabled>批量删除</button>
+          </div>
+          <button id="refresh-feedback" class="button primary" type="button">刷新反馈</button>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>提交时间</th>
-              <th>学号</th>
-              <th>姓名</th>
-              <th>讲座活动</th>
-              <th>活动时间</th>
-              <th>状态</th>
-              <th>反馈意见</th>
-              <th>联系方式</th>
-              <th>管理员备注</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="feedback-body">
-            <tr><td colspan="10" class="empty">暂无反馈</td></tr>
-          </tbody>
-        </table>
+      <div id="feedback-body" class="feedback-list">
+        <div class="empty">暂无反馈</div>
       </div>
     </section>
 
@@ -115,7 +109,7 @@
       <div class="table-toolbar">
         <div>
           <h2>学生票数</h2>
-          <p>当前最多显示 1000 条记录</p>
+          <p>每页最多显示 15 条记录，可以分页查看。</p>
         </div>
         <div class="toolbar-controls">
           <input id="search-input" type="search" placeholder="搜索学号、姓名、层次">
@@ -137,13 +131,17 @@
               <th>讲座票</th>
               <th>要求</th>
               <th>进度</th>
-              <th>操作</th>
             </tr>
           </thead>
           <tbody id="students-body">
-            <tr><td colspan="7" class="empty">暂无数据</td></tr>
+            <tr><td colspan="6" class="empty">暂无数据</td></tr>
           </tbody>
         </table>
+      </div>
+      <div class="pagination-bar">
+        <button id="students-prev" class="page-button" type="button">上一页</button>
+        <span id="students-page-info" class="page-info">第 1 页 / 共 1 页</span>
+        <button id="students-next" class="page-button" type="button">下一页</button>
       </div>
     </section>
   </main>
