@@ -14,7 +14,7 @@ import traceback
 import urllib.parse
 import warnings
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -55,6 +55,7 @@ PDF_PAGE_WIDTH = 595.28
 PDF_PAGE_HEIGHT = 841.89
 PDF_MARGIN = 54
 _COLLEGE_HEADER_LINES: list[str] | None = None
+BEIJING_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 TICKET_REQUIREMENTS: dict[str, int] = {
     "本博创新班-研究生阶段": 20,
@@ -114,7 +115,11 @@ class AppError(Exception):
 
 
 def now_text() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now(BEIJING_TZ).isoformat(timespec="seconds")
+
+
+def beijing_now() -> datetime:
+    return datetime.now(BEIJING_TZ)
 
 
 def backup_database(reason: str) -> str | None:
@@ -123,7 +128,7 @@ def backup_database(reason: str) -> str | None:
     backup_dir = DATA_DIR / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     safe_reason = re.sub(r"[^a-zA-Z0-9_-]+", "_", reason).strip("_") or "backup"
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    stamp = beijing_now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_dir / f"tickets_{stamp}_{safe_reason}.db"
     source = sqlite3.connect(DB_PATH)
     target = sqlite3.connect(backup_path)
@@ -1750,7 +1755,7 @@ def worksheet_xml(rows: list[list[Any]], sheet_name: str = "Sheet1") -> str:
 
 
 def make_xlsx(rows: list[list[Any]], sheet_name: str = "Sheet1") -> bytes:
-    created = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    created = beijing_now().isoformat(timespec="seconds")
     sheet_name_xml = escape(sheet_name[:31] or "Sheet1")
     content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
