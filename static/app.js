@@ -5,6 +5,8 @@ const state = {
   students: [],
   studentPage: 1,
   studentsPerPage: 15,
+  grades: [],
+  selectedStudentIds: new Set(),
   feedbackItems: [],
   feedbackStatus: "pending",
   selectedFeedbackIds: new Set(),
@@ -87,8 +89,9 @@ function updateStudentPagination(totalItems) {
 function renderStudents(students) {
   const body = $("#students-body");
   if (!students.length) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">暂无数据</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
     updateStudentPagination(0);
+    updateStudentSelectionState();
     return;
   }
 
@@ -103,8 +106,12 @@ function renderStudents(students) {
       const percent = requirement === 0 ? 100 : Math.min(100, Math.round((current / requirement) * 100));
       const statusClass = complete ? "ok" : "warn";
       const statusText = complete ? "达标" : "未达标";
+      const checked = state.selectedStudentIds.has(String(student.student_id)) ? "checked" : "";
       return `
         <tr data-id="${escapeHtml(student.student_id)}">
+          <td>
+            <input class="student-select" type="checkbox" value="${escapeHtml(student.student_id)}" aria-label="选择 ${escapeHtml(student.name)}" ${checked}>
+          </td>
           <td>${escapeHtml(student.student_id)}</td>
           <td>${escapeHtml(student.name)}</td>
           <td>${escapeHtml(student.education_level)}</td>
@@ -117,12 +124,91 @@ function renderStudents(students) {
             </div>
             <span class="status ${statusClass}">${statusText}</span>
           </td>
+          <td>
+            <button class="student-export-one" type="button" data-student-id="${escapeHtml(student.student_id)}">导出 PDF</button>
+          </td>
         </tr>
       `;
     })
     .join("");
 
   updateStudentPagination(students.length);
+  updateStudentSelectionState();
+}
+
+function currentPageStudents() {
+  const startIndex = (state.studentPage - 1) * state.studentsPerPage;
+  return state.students.slice(startIndex, startIndex + state.studentsPerPage);
+}
+
+function renderGrades(grades) {
+  const select = $("#grade-select");
+  if (!select) return;
+  const previous = select.value;
+  state.grades = grades || [];
+  select.innerHTML = '<option value="">选择年级</option>' + state.grades
+    .map((grade) => `<option value="${escapeHtml(grade)}">${escapeHtml(grade)} 级</option>`)
+    .join("");
+  if (state.grades.includes(previous)) {
+    select.value = previous;
+  }
+  $("#student-export-grade").disabled = !select.value;
+}
+
+function updateStudentSelectionState() {
+  const selectedCount = state.selectedStudentIds.size;
+  const countLabel = $("#student-selected-count");
+  const exportSelected = $("#student-export-selected");
+  const selectPage = $("#student-select-page");
+  const pageIds = currentPageStudents().map((student) => String(student.student_id));
+  const selectedPageIds = pageIds.filter((id) => state.selectedStudentIds.has(id));
+
+  if (countLabel) countLabel.textContent = `已选 ${selectedCount} 人`;
+  if (exportSelected) exportSelected.disabled = selectedCount === 0;
+  if (selectPage) {
+    selectPage.checked = pageIds.length > 0 && selectedPageIds.length === pageIds.length;
+    selectPage.indeterminate = selectedPageIds.length > 0 && selectedPageIds.length < pageIds.length;
+  }
+}
+
+function downloadFilename(response, fallback) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1]);
+    } catch {
+      return fallback;
+    }
+  }
+  const plain = disposition.match(/filename="?([^"]+)"?/i);
+  return plain?.[1] || fallback;
+}
+
+async function downloadStudentPdfs(payload) {
+  const response = await fetch("/api/export/student-pdfs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (response.status === 401) {
+    window.location.href = `/admin/login?next=${encodeURIComponent(window.location.pathname)}`;
+    throw new Error("请先登录后台");
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "导出失败");
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = downloadFilename(response, "讲座票明细.pdf");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function feedbackStatusLabel(status) {
@@ -247,6 +333,7 @@ async function loadStudents() {
   state.students = data.students || [];
   renderSummary(data.summary || {});
   renderRules(state.rules);
+  renderGrades(data.grades || []);
   renderStudents(state.students);
 }
 
@@ -381,6 +468,92 @@ function bindPagination() {
     if (state.studentPage >= totalPages) return;
     state.studentPage += 1;
     renderStudents(state.students);
+  });
+}
+
+function bindStudentExportActions() {
+  $("#student-select-page").addEventListener("change", (event) => {
+    currentPageStudents().forEach((student) => {
+      const id = String(student.student_id);
+      if (event.target.checked) {
+        state.selectedStudentIds.add(id);
+      } else {
+        state.selectedStudentIds.delete(id);
+      }
+    });
+    renderStudents(state.students);
+  });
+
+  $("#grade-select").addEventListener("change", (event) => {
+    $("#student-export-grade").disabled = !event.target.value;
+  });
+
+  $("#student-export-selected").addEventListener("click", async () => {
+    const studentIds = Array.from(state.selectedStudentIds);
+    if (!studentIds.length) {
+      showToast("请先选择学生");
+      return;
+    }
+    const button = $("#student-export-selected");
+    button.disabled = true;
+    button.textContent = "导出中...";
+    try {
+      await downloadStudentPdfs({ student_ids: studentIds });
+      showToast(studentIds.length === 1 ? "单人 PDF 已生成" : "所选学生 PDF 压缩包已生成");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.textContent = "导出所选 PDF";
+      updateStudentSelectionState();
+    }
+  });
+
+  $("#student-export-grade").addEventListener("click", async () => {
+    const grade = $("#grade-select").value;
+    if (!grade) {
+      showToast("请先选择年级");
+      return;
+    }
+    const button = $("#student-export-grade");
+    button.disabled = true;
+    button.textContent = "导出中...";
+    try {
+      await downloadStudentPdfs({ grade });
+      showToast(`${grade} 级学生 PDF 压缩包已生成`);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.textContent = "导出年级 PDF";
+      button.disabled = !$("#grade-select").value;
+    }
+  });
+
+  $("#students-body").addEventListener("change", (event) => {
+    const checkbox = event.target.closest(".student-select");
+    if (!checkbox) return;
+    const id = String(checkbox.value);
+    if (checkbox.checked) {
+      state.selectedStudentIds.add(id);
+    } else {
+      state.selectedStudentIds.delete(id);
+    }
+    updateStudentSelectionState();
+  });
+
+  $("#students-body").addEventListener("click", async (event) => {
+    const button = event.target.closest(".student-export-one");
+    if (!button) return;
+    button.disabled = true;
+    button.textContent = "导出中...";
+    try {
+      await downloadStudentPdfs({ student_ids: [button.dataset.studentId] });
+      showToast("单人 PDF 已生成");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "导出 PDF";
+    }
   });
 }
 
@@ -603,6 +776,7 @@ async function init() {
   bindUpload("#event-import-form", "/api/import/events", "讲座活动导入");
   bindFilters();
   bindPagination();
+  bindStudentExportActions();
   bindResultPanel();
   bindFeedbackActions();
   bindLogout();

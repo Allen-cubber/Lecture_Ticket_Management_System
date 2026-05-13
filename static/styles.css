@@ -387,6 +387,10 @@ button.primary:hover {
   justify-content: flex-end;
 }
 
+.student-toolbar-controls {
+  justify-content: flex-end;
+}
+
 .feedback-batch-actions {
   display: inline-flex;
   align-items: center;
@@ -417,6 +421,52 @@ button.primary:hover {
   cursor: not-allowed;
   color: var(--muted);
   background: #f2f4f5;
+}
+
+.student-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbfc;
+}
+
+.student-export-actions span {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.student-export-actions button,
+.student-export-one {
+  height: 30px;
+  padding: 0 9px;
+  border-color: var(--line);
+  background: #fff;
+  color: var(--primary-dark);
+  font-size: 13px;
+}
+
+.student-export-actions button:disabled,
+.student-export-one:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  background: #f2f4f5;
+}
+
+#grade-select {
+  height: 30px;
+  min-width: 104px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
 }
 
 .rules-band {
@@ -698,7 +748,7 @@ button.primary:hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 1040px;
 }
 
 th,
@@ -723,6 +773,14 @@ td {
 .ticket-count {
   color: var(--primary-dark);
   font-size: 16px;
+}
+
+.student-select,
+#student-select-page {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
 }
 
 .progress {
@@ -1227,6 +1285,11 @@ td {
     flex-wrap: wrap;
   }
 
+  .student-export-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
   .file-picker,
   #search-input {
     width: 100%;
@@ -1284,6 +1347,11 @@ td {
   .toolbar-controls > *,
   .segmented button {
     flex: 1;
+  }
+
+  #grade-select {
+    flex: 1;
+    min-width: 140px;
   }
 
   .student-query-row,

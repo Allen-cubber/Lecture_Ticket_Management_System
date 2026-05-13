@@ -40,9 +40,21 @@ FEEDBACK_STATUSES = {
 }
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PDF_MIME = "application/pdf"
+ZIP_MIME = "application/zip"
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+COLLEGE_HEADER_TEMPLATE = ROOT / "学院抬头文件.doc"
+FALLBACK_COLLEGE_HEADER_LINES = [
+    "华南理工大学电子与信息学院",
+    "SCHOOL OF ELECTRONIC AND INFORMATION ENGINEERING",
+    "SOUTH CHINA UNIVERSITY OF TECHNOLOGY",
+]
+PDF_PAGE_WIDTH = 595.28
+PDF_PAGE_HEIGHT = 841.89
+PDF_MARGIN = 54
+_COLLEGE_HEADER_LINES: list[str] | None = None
 
 TICKET_REQUIREMENTS: dict[str, int] = {
     "本博创新班-研究生阶段": 20,
@@ -738,9 +750,10 @@ def list_students(query: dict[str, list[str]]) -> dict[str, Any]:
         for row in rows:
             requirement = int(row["requirement"])
             current = int(row["current_tickets"])
+            row["grade"] = grade_from_student_id(row["student_id"])
             row["progress_text"] = f"{current}/{requirement}"
             row["complete"] = current >= requirement
-        return {"summary": student_summary(db), "students": rows, "rules": TICKET_REQUIREMENTS}
+        return {"summary": student_summary(db), "students": rows, "rules": TICKET_REQUIREMENTS, "grades": list_student_grades(db)}
 
 
 def query_student_ticket(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -1303,6 +1316,399 @@ def build_export_rows() -> list[list[Any]]:
     return rows
 
 
+def grade_from_student_id(value: Any) -> str:
+    match = re.match(r"^(\d{4})", normalize_student_id(value))
+    return match.group(1) if match else ""
+
+
+def list_student_grades(db: sqlite3.Connection) -> list[str]:
+    grades = {
+        grade
+        for row in db.execute("SELECT student_id FROM students")
+        if (grade := grade_from_student_id(row["student_id"]))
+    }
+    return sorted(grades, reverse=True)
+
+
+def safe_filename_part(value: Any, fallback: str = "未命名") -> str:
+    text = clean_text(value) or fallback
+    text = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", text)
+    text = re.sub(r"\s+", "_", text).strip("._ ")
+    return text[:80] or fallback
+
+
+def first_payload_text(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key, "")
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return clean_text(value)
+
+
+def student_ids_from_payload(value: Any) -> list[str]:
+    raw_values: list[Any]
+    if isinstance(value, list):
+        raw_values = value
+    elif value is None:
+        raw_values = []
+    else:
+        raw_values = [value]
+
+    student_ids: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        parts = str(raw).split(",")
+        for part in parts:
+            student_id = normalize_student_id(part)
+            if student_id and student_id not in seen:
+                seen.add(student_id)
+                student_ids.append(student_id)
+    return student_ids
+
+
+def chunked(values: list[str], size: int = 800) -> list[list[str]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def collect_student_ticket_reports(student_ids: list[str], grade: str = "") -> list[dict[str, Any]]:
+    where = ""
+    params: list[Any] = []
+    if grade:
+        if not re.fullmatch(r"\d{4}", grade):
+            raise AppError("年级格式应为 4 位年份，例如 2024")
+        where = "WHERE student_id LIKE ?"
+        params.append(f"{grade}%")
+    elif student_ids:
+        placeholders = ",".join("?" for _ in student_ids)
+        where = f"WHERE student_id IN ({placeholders})"
+        params.extend(student_ids)
+    else:
+        raise AppError("请先选择学生或年级")
+
+    db = connect_db()
+    try:
+        students = [
+            dict(row)
+            for row in db.execute(
+                f"""
+                SELECT student_id, name, education_level, requirement, current_tickets, updated_at
+                  FROM students
+                  {where}
+                 ORDER BY student_id COLLATE NOCASE
+                """,
+                params,
+            ).fetchall()
+        ]
+
+        if not students:
+            raise AppError("没有找到可导出的学生")
+
+        events_by_student: dict[str, list[dict[str, Any]]] = {
+            student["student_id"]: [] for student in students
+        }
+        report_ids = [student["student_id"] for student in students]
+        for id_chunk in chunked(report_ids):
+            placeholders = ",".join("?" for _ in id_chunk)
+            for row in db.execute(
+                f"""
+                SELECT student_id, activity_name, activity_time, imported_at
+                  FROM ticket_events
+                 WHERE student_id IN ({placeholders})
+                 ORDER BY student_id COLLATE NOCASE, activity_time DESC, id DESC
+                """,
+                id_chunk,
+            ).fetchall():
+                events_by_student[row["student_id"]].append(dict(row))
+    finally:
+        db.close()
+
+    reports: list[dict[str, Any]] = []
+    for student in students:
+        current = int(student["current_tickets"])
+        requirement = int(student["requirement"])
+        reports.append(
+            {
+                "student": student,
+                "events": events_by_student.get(student["student_id"], []),
+                "current": current,
+                "requirement": requirement,
+                "complete": current >= requirement,
+                "progress_text": f"{current}/{requirement}",
+            }
+        )
+    return reports
+
+
+def pdf_text_hex(value: Any) -> str:
+    return clean_text(value).encode("utf-16-be").hex().upper()
+
+
+def pdf_text_command(
+    value: Any,
+    x: float,
+    y: float,
+    size: float = 12,
+    color: tuple[float, float, float] = (0, 0, 0),
+) -> str:
+    r, g, b = color
+    return f"BT /F1 {size:.2f} Tf {r:.3f} {g:.3f} {b:.3f} rg {x:.2f} {y:.2f} Td <{pdf_text_hex(value)}> Tj ET"
+
+
+def pdf_line_command(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    width: float = 0.8,
+    color: tuple[float, float, float] = (0, 0, 0),
+) -> str:
+    r, g, b = color
+    return f"{r:.3f} {g:.3f} {b:.3f} RG {width:.2f} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S"
+
+
+def approximate_text_width(value: Any, size: float) -> float:
+    text = clean_text(value)
+    return len(text) * size
+
+
+def centered_text_command(
+    value: Any,
+    y: float,
+    size: float = 12,
+    color: tuple[float, float, float] = (0, 0, 0),
+    max_width: float | None = None,
+) -> str:
+    if max_width:
+        width = approximate_text_width(value, size)
+        if width > max_width:
+            size = max(6.5, size * max_width / width)
+    width = approximate_text_width(value, size)
+    x = max(PDF_MARGIN, (PDF_PAGE_WIDTH - width) / 2)
+    return pdf_text_command(value, x, y, size, color)
+
+
+def college_header_lines() -> list[str]:
+    global _COLLEGE_HEADER_LINES
+    if _COLLEGE_HEADER_LINES is not None:
+        return _COLLEGE_HEADER_LINES
+
+    lines = FALLBACK_COLLEGE_HEADER_LINES[:]
+    if COLLEGE_HEADER_TEMPLATE.exists():
+        try:
+            text = COLLEGE_HEADER_TEMPLATE.read_bytes().decode("utf-16le", errors="ignore")
+            found = [line for line in FALLBACK_COLLEGE_HEADER_LINES if line in text]
+            if found:
+                lines = found[:3]
+        except OSError:
+            pass
+    _COLLEGE_HEADER_LINES = lines
+    return lines
+
+
+def wrap_text(value: Any, max_units: int) -> list[str]:
+    text = clean_text(value)
+    if not text:
+        return [""]
+
+    lines: list[str] = []
+    line = ""
+    line_units = 0
+    for ch in text:
+        ch_units = 2 if ord(ch) > 127 else 1
+        if line and line_units + ch_units > max_units:
+            lines.append(line)
+            line = ch
+            line_units = ch_units
+        else:
+            line += ch
+            line_units += ch_units
+    if line:
+        lines.append(line)
+    return lines
+
+
+def make_pdf_document(page_commands: list[list[str]]) -> bytes:
+    page_ids = [6 + index * 2 for index in range(len(page_commands))]
+    content_ids = [page_id + 1 for page_id in page_ids]
+    kids = " ".join(f"{page_id} 0 R" for page_id in page_ids)
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {len(page_commands)} >>".encode("ascii"),
+        (
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light "
+            b"/Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>"
+        ),
+        (
+            b"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light "
+            b"/CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> "
+            b"/FontDescriptor 5 0 R /DW 1000 >>"
+        ),
+        (
+            b"<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 "
+            b"/FontBBox [-25 -254 1000 880] /ItalicAngle 0 /Ascent 880 "
+            b"/Descent -120 /CapHeight 700 /StemV 80 >>"
+        ),
+    ]
+
+    for page_id, content_id, commands in zip(page_ids, content_ids, page_commands):
+        page = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PDF_PAGE_WIDTH:.2f} {PDF_PAGE_HEIGHT:.2f}] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
+        )
+        content = ("\n".join(commands) + "\n").encode("ascii")
+        stream = b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"endstream"
+        objects.append(page.encode("ascii"))
+        objects.append(stream)
+
+    data = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data.extend(f"{index} 0 obj\n".encode("ascii"))
+        data.extend(obj)
+        data.extend(b"\nendobj\n")
+
+    xref_start = len(data)
+    data.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    data.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        data.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    data.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n".encode(
+            "ascii"
+        )
+    )
+    return bytes(data)
+
+
+def make_student_ticket_pdf(report: dict[str, Any]) -> bytes:
+    student = report["student"]
+    events = report["events"]
+    current = report["current"]
+    requirement = report["requirement"]
+    status_text = "已满足" if report["complete"] else "未满足"
+    black = (0, 0, 0)
+    status_color = (0.0, 0.45, 0.18) if report["complete"] else (0.82, 0.05, 0.02)
+    header_lines = college_header_lines()
+
+    pages: list[list[str]] = []
+    y = PDF_PAGE_HEIGHT - PDF_MARGIN
+
+    def add_header() -> None:
+        nonlocal y
+        y = PDF_PAGE_HEIGHT - 48
+        for index, line in enumerate(header_lines):
+            size = 17 if index == 0 else 8.8
+            gap = 8 if index == 0 else 5
+            max_width = PDF_PAGE_WIDTH - PDF_MARGIN * 2 - 12
+            pages[-1].append(centered_text_command(line, y, size=size, color=black, max_width=max_width))
+            y -= size + gap
+        y -= 10
+        pages[-1].append(pdf_line_command(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y, 0.9, black))
+        y -= 30
+
+    def new_page() -> None:
+        pages.append([])
+        add_header()
+
+    def ensure_space(space: float) -> None:
+        nonlocal y
+        if y - space < PDF_MARGIN:
+            new_page()
+
+    def add_line(
+        value: Any,
+        size: float = 12,
+        color: tuple[float, float, float] = (0, 0, 0),
+        x: float = PDF_MARGIN,
+        gap: float = 6,
+    ) -> None:
+        nonlocal y
+        line_height = size + gap
+        ensure_space(line_height)
+        pages[-1].append(pdf_text_command(value, x, y, size, color))
+        y -= line_height
+
+    def add_wrapped(
+        value: Any,
+        size: float = 12,
+        color: tuple[float, float, float] = (0, 0, 0),
+        x: float = PDF_MARGIN,
+        max_units: int = 78,
+        gap: float = 5,
+    ) -> None:
+        for line in wrap_text(value, max_units):
+            add_line(line, size=size, color=color, x=x, gap=gap)
+
+    def add_space(space: float) -> None:
+        nonlocal y
+        ensure_space(space)
+        y -= space
+
+    def add_rule(gap_before: float = 16, gap_after: float = 30) -> None:
+        nonlocal y
+        add_space(gap_before)
+        pages[-1].append(pdf_line_command(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y, 0.6, black))
+        y -= gap_after
+
+    new_page()
+    pages[-1].append(centered_text_command("讲座票获得信息", y, size=18, color=black, max_width=PDF_PAGE_WIDTH - PDF_MARGIN * 2))
+    y -= 34
+    add_line(f"学生姓名：{student['name']}    学号：{student['student_id']}", size=13)
+    add_line(f"学历层次：{student['education_level']}", size=13)
+    add_line(f"导出时间：{now_text()}", size=11, gap=10)
+    add_rule(gap_before=16, gap_after=30)
+    add_line(f"已获得讲座票数：{current} / 要求 {requirement}", size=16, gap=10)
+    add_line(f"是否已经满足要求：{status_text}", size=22, color=status_color, gap=12)
+    add_rule(gap_before=18, gap_after=30)
+    add_line("详细活动列表", size=15, gap=8)
+
+    if events:
+        for index, event in enumerate(events, start=1):
+            add_wrapped(f"{index}. {event['activity_name']}", size=12, max_units=72)
+            add_wrapped(f"活动时间：{event['activity_time']}", size=11, x=PDF_MARGIN + 18, max_units=70)
+            add_space(4)
+    else:
+        add_line("暂无已获得讲座票记录", size=12)
+
+    total_pages = len(pages)
+    for index, page in enumerate(pages, start=1):
+        page.append(pdf_text_command(f"第 {index} / {total_pages} 页", PDF_PAGE_WIDTH - 120, 28, 9, black))
+    return make_pdf_document(pages)
+
+
+def student_pdf_filename(report: dict[str, Any]) -> str:
+    student = report["student"]
+    return f"{safe_filename_part(student['student_id'])}_{safe_filename_part(student['name'])}_讲座票明细.pdf"
+
+
+def build_student_pdfs_export(payload: dict[str, Any]) -> tuple[bytes, str, str]:
+    grade = first_payload_text(payload, "grade")
+    student_ids = student_ids_from_payload(payload.get("student_ids"))
+    if not student_ids:
+        student_ids = student_ids_from_payload(payload.get("student_id"))
+
+    reports = collect_student_ticket_reports(student_ids, grade)
+    if len(reports) == 1:
+        return make_student_ticket_pdf(reports[0]), student_pdf_filename(reports[0]), PDF_MIME
+
+    buffer = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for report in reports:
+            filename = student_pdf_filename(report)
+            if filename in used_names:
+                stem = filename.removesuffix(".pdf")
+                counter = 2
+                while f"{stem}_{counter}.pdf" in used_names:
+                    counter += 1
+                filename = f"{stem}_{counter}.pdf"
+            used_names.add(filename)
+            archive.writestr(filename, make_student_ticket_pdf(report))
+
+    label = f"{grade}级" if grade else f"所选{len(reports)}人"
+    return buffer.getvalue(), f"{label}讲座票明细.zip", ZIP_MIME
+
+
 def worksheet_xml(rows: list[list[Any]], sheet_name: str = "Sheet1") -> str:
     max_cols = max((len(row) for row in rows), default=1)
     widths = []
@@ -1480,13 +1886,16 @@ class TicketHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_xlsx(self, data: bytes, filename: str) -> None:
+    def send_download(self, data: bytes, filename: str, content_type: str) -> None:
         self.send_response(200)
-        self.send_header("Content-Type", XLSX_MIME)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition", content_disposition(filename))
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def send_xlsx(self, data: bytes, filename: str) -> None:
+        self.send_download(data, filename, XLSX_MIME)
 
     def read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -1561,6 +1970,10 @@ class TicketHandler(SimpleHTTPRequestHandler):
             if path == "/api/export":
                 self.send_xlsx(make_xlsx(build_export_rows(), "讲座票汇总"), "讲座票汇总.xlsx")
                 return
+            if path == "/api/export/student-pdfs":
+                data, filename, content_type = build_student_pdfs_export(query)
+                self.send_download(data, filename, content_type)
+                return
             if path == "/api/templates/students":
                 rows = [["学号", "姓名", "学历层次"]]
                 self.send_xlsx(make_xlsx(rows, "学生名单模板"), "学生名单导入模板.xlsx")
@@ -1605,6 +2018,10 @@ class TicketHandler(SimpleHTTPRequestHandler):
                 return
             if parsed.path == "/api/import/events":
                 self.send_json(import_events(self.read_upload()))
+                return
+            if parsed.path == "/api/export/student-pdfs":
+                data, filename, content_type = build_student_pdfs_export(self.read_json_body())
+                self.send_download(data, filename, content_type)
                 return
             if parsed.path == "/api/students/update":
                 self.send_json(update_student(self.read_json_body()))

@@ -111,12 +111,20 @@
           <h2>学生票数</h2>
           <p>每页最多显示 15 条记录，可以分页查看。</p>
         </div>
-        <div class="toolbar-controls">
+        <div class="toolbar-controls student-toolbar-controls">
           <input id="search-input" type="search" placeholder="搜索学号、姓名、层次">
           <div class="segmented" role="group" aria-label="筛选状态">
             <button class="active" type="button" data-status="all">全部</button>
             <button type="button" data-status="unfinished">未达标</button>
             <button type="button" data-status="completed">已达标</button>
+          </div>
+          <div class="student-export-actions" aria-label="学生讲座票导出">
+            <span id="student-selected-count">已选 0 人</span>
+            <button id="student-export-selected" type="button" disabled>导出所选 PDF</button>
+            <select id="grade-select" aria-label="选择年级">
+              <option value="">选择年级</option>
+            </select>
+            <button id="student-export-grade" type="button" disabled>导出年级 PDF</button>
           </div>
         </div>
       </div>
@@ -125,16 +133,18 @@
         <table>
           <thead>
             <tr>
+              <th><input id="student-select-page" type="checkbox" aria-label="选择当前页学生"></th>
               <th>学号</th>
               <th>姓名</th>
               <th>学历层次</th>
               <th>讲座票</th>
               <th>要求</th>
               <th>进度</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="students-body">
-            <tr><td colspan="6" class="empty">暂无数据</td></tr>
+            <tr><td colspan="8" class="empty">暂无数据</td></tr>
           </tbody>
         </table>
       </div>
